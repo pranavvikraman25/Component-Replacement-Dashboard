@@ -1,34 +1,33 @@
 """
-KONE EQUIPMENT MAINTENANCE DASHBOARD - NEW PROJECT
-Version: 1.0 - Multi-Excel Integration with Cascading Filters
+KONE EQUIPMENT MAINTENANCE DASHBOARD - UPDATED v1.1
+Version: 1.1 - Single Excel File with Multiple Sheets
 
-KEY FEATURES:
-✅ Merge two Excel files (Equipment Data + Maintenance Data)
-✅ Cascading filters: Equipment Code → Type → Module → Components
-✅ Clean number formatting (43397068 not 43,397,068)
-✅ Same beautiful design as v1.3
-✅ Production ready for demo
+KEY CHANGE:
+✅ Now uses ONE Excel file instead of two
+✅ Reads from Sheet 2 (user selectable)
+✅ All data in one sheet
+✅ Future-ready: Can scale to two separate sheets later
 
-FILTER FLOW:
-  Excel 1 (Equipment Data):
-    ├─ Equipment Code (43397068)
-    ├─ Type (KONE KCE)
-    └─ (Link key: Equipment Code)
+CURRENT FLOW:
+  Excel File (Multiple Sheets):
+    └─ Sheet 2 (or any selected sheet)
+       ├─ Equipment Code
+       ├─ Type
+       ├─ Module
+       ├─ Components
+       ├─ Preparation/Finalization time
+       ├─ Activity time
+       ├─ Total time
+       └─ No of man power
 
-  Excel 2 (Maintenance Data):
-    ├─ Module
-    ├─ Components
-    ├─ Preparation/Finalization time
-    ├─ Activity time
-    ├─ Total time
-    └─ No of man power
-
-  User Selection:
-    1. Select Equipment Code
-    2. Type auto-populated (from Equipment Data)
-    3. Select Module
-    4. Select Components
-    5. View data & export
+USER SELECTION:
+  1. Upload single Excel file
+  2. Select which sheet to use (default: Sheet 2)
+  3. Select Equipment Code
+  4. Type auto-populated
+  5. Select Module
+  6. Select Components
+  7. View data & export
 """
 
 import streamlit as st
@@ -37,7 +36,6 @@ import numpy as np
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
-import re
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -145,18 +143,11 @@ st.markdown("""
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
-"""
-SESSION STATE for Cascading Filters:
-  - equipment_data: Merged data from two Excel files
-  - equipment_codes: List of unique equipment codes
-  - selected_equipment: Currently selected equipment code
-  - selected_type: Type (auto-populated from equipment data)
-  - selected_module: Currently selected module
-  - selected_components: List of selected components
-"""
 
 if 'equipment_data' not in st.session_state:
     st.session_state.equipment_data = None
+if 'selected_sheet' not in st.session_state:
+    st.session_state.selected_sheet = None
 if 'selected_equipment' not in st.session_state:
     st.session_state.selected_equipment = None
 if 'selected_type' not in st.session_state:
@@ -165,6 +156,8 @@ if 'selected_module' not in st.session_state:
     st.session_state.selected_module = None
 if 'selected_components' not in st.session_state:
     st.session_state.selected_components = []
+if 'available_sheets' not in st.session_state:
+    st.session_state.available_sheets = []
 
 # ============================================================================
 # UTILITY FUNCTIONS - TIME CONVERSION
@@ -203,59 +196,63 @@ def clean_equipment_code(code):
         return None
     try:
         # Remove commas
-        cleaned = str(code).replace(',', '')
+        cleaned = str(code).replace(',', '').strip()
         # Convert to integer and back to string (ensures it's a proper number)
         return str(int(cleaned))
     except:
-        return str(code)
+        return str(code).strip()
 
 # ============================================================================
-# DATA LOADING & MERGING
+# DATA LOADING - SINGLE EXCEL FILE WITH SHEET SELECTION
 # ============================================================================
 
-def merge_excel_files(equipment_file, maintenance_file):
+def get_excel_sheets(excel_file):
+    """Get list of sheet names from Excel file"""
+    try:
+        xls = pd.ExcelFile(excel_file)
+        return xls.sheet_names
+    except Exception as e:
+        return None, f"❌ Error reading Excel: {str(e)}"
+
+def load_sheet_data(excel_file, sheet_name):
     """
-    Merge two Excel files:
+    Load data from selected sheet
     
-    Equipment File should have:
+    Expected columns:
       - Equipment Code
       - Type
-    
-    Maintenance File should have:
-      - Equipment Code (link key)
       - Module
       - Components
-      - Preparation/Finalization time
-      - Activity time
-      - Total time
+      - Preparation/Finalization time (or similar)
+      - Activity time (or similar)
+      - Total time (or similar)
       - No of man power
     """
     try:
-        # Read both files
-        equipment_df = pd.read_excel(equipment_file)
-        maintenance_df = pd.read_excel(maintenance_file)
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
         
-        # Clean equipment codes in both files
-        equipment_df['Equipment Code'] = equipment_df['Equipment Code'].apply(clean_equipment_code)
-        maintenance_df['Equipment Code'] = maintenance_df['Equipment Code'].apply(clean_equipment_code)
+        if df.empty:
+            return None, f"❌ Sheet '{sheet_name}' is empty!"
         
-        # Merge on Equipment Code
-        merged_df = maintenance_df.merge(
-            equipment_df[['Equipment Code', 'Type']],
-            on='Equipment Code',
-            how='left'
-        )
+        # Clean equipment codes
+        if 'Equipment Code' in df.columns:
+            df['Equipment Code'] = df['Equipment Code'].apply(clean_equipment_code)
         
-        # Forward fill Type and Module (handle merged cells)
-        merged_df['Type'] = merged_df['Type'].fillna(method='ffill')
-        if 'Module' in merged_df.columns:
-            merged_df['Module'] = merged_df['Module'].fillna(method='ffill')
+        # Forward fill Type, Module (handle merged cells)
+        if 'Equipment Code' in df.columns:
+            df['Equipment Code'] = df['Equipment Code'].fillna(method='ffill')
+        if 'Type' in df.columns:
+            df['Type'] = df['Type'].fillna(method='ffill')
+        if 'Module' in df.columns:
+            df['Module'] = df['Module'].fillna(method='ffill')
         
-        st.session_state.equipment_data = merged_df
-        return merged_df, None
+        st.session_state.equipment_data = df
+        st.session_state.selected_sheet = sheet_name
+        
+        return df, None
     
     except Exception as e:
-        return None, f"❌ Error merging files: {str(e)}"
+        return None, f"❌ Error loading sheet: {str(e)}"
 
 # ============================================================================
 # FILTER FUNCTIONS - CASCADING LOGIC
@@ -333,16 +330,30 @@ def calculate_stats(df):
         'avg_manpower': 0,
     }
     
+    # Find the total time column (flexible naming)
+    total_time_col = None
+    for col in df.columns:
+        if 'total' in col.lower() and 'time' in col.lower():
+            total_time_col = col
+            break
+    
     try:
-        if 'Total time' in df.columns:
-            total_secs = sum(time_str_to_seconds(t) for t in df['Total time'])
+        if total_time_col and total_time_col in df.columns:
+            total_secs = sum(time_str_to_seconds(t) for t in df[total_time_col])
             stats['total_time'] = total_secs
     except:
         pass
     
+    # Find the manpower column (flexible naming)
+    manpower_col = None
+    for col in df.columns:
+        if 'man' in col.lower() and 'power' in col.lower():
+            manpower_col = col
+            break
+    
     try:
-        if 'No of man power' in df.columns:
-            manpower = pd.to_numeric(df['No of man power'], errors='coerce').dropna()
+        if manpower_col and manpower_col in df.columns:
+            manpower = pd.to_numeric(df[manpower_col], errors='coerce').dropna()
             if len(manpower) > 0:
                 stats['avg_manpower'] = float(manpower.mean())
     except:
@@ -358,34 +369,46 @@ with st.sidebar:
     st.title("🔧 Equipment Dashboard Control")
     st.markdown("---")
     
-    st.subheader("📁 Upload Excel Files")
-    st.info("You need 2 Excel files to get started")
+    st.subheader("📁 Upload Excel File")
+    st.info("✅ Upload ONE Excel file with multiple sheets")
     
-    # Equipment file upload
-    equipment_file = st.file_uploader(
-        "Equipment File (Equipment Code + Type)",
+    # File upload
+    excel_file = st.file_uploader(
+        "Choose your Excel file",
         type=['xlsx', 'xls'],
-        key='equipment_file'
+        key='excel_file'
     )
     
-    # Maintenance file upload
-    maintenance_file = st.file_uploader(
-        "Maintenance File (Components + Times + Manpower)",
-        type=['xlsx', 'xls'],
-        key='maintenance_file'
-    )
-    
-    # Merge files
-    if equipment_file is not None and maintenance_file is not None:
-        with st.spinner("📥 Merging Excel files..."):
-            merged_data, error = merge_excel_files(equipment_file, maintenance_file)
+    # Get sheets and let user select
+    if excel_file is not None:
+        sheets = get_excel_sheets(excel_file)
+        
+        if sheets:
+            st.subheader("📄 Select Sheet")
             
-            if error:
-                st.error(error)
-            else:
-                st.success(f"✅ Merged {len(merged_data)} records!")
-                with st.expander("📋 Data Preview"):
-                    st.dataframe(merged_data.head(), use_container_width=True)
+            # Default to Sheet 2 if it exists, otherwise first sheet
+            default_sheet = sheets[1] if len(sheets) > 1 else sheets[0]
+            default_index = sheets.index(default_sheet) if default_sheet in sheets else 0
+            
+            selected_sheet = st.selectbox(
+                "Which sheet contains the data?",
+                options=sheets,
+                index=default_index,
+                help=f"Default: {default_sheet}"
+            )
+            
+            # Load the selected sheet
+            with st.spinner(f"📥 Loading '{selected_sheet}'..."):
+                df, error = load_sheet_data(excel_file, selected_sheet)
+                
+                if error:
+                    st.error(error)
+                else:
+                    st.success(f"✅ Loaded {len(df)} records from '{selected_sheet}'!")
+                    
+                    with st.expander("📋 Data Preview"):
+                        st.dataframe(df.head(), use_container_width=True)
+                        st.write(f"**Columns found**: {', '.join(df.columns.tolist())}")
     
     st.markdown("---")
     
@@ -426,10 +449,29 @@ with st.sidebar:
 # ============================================================================
 
 st.title("🔧 Equipment Maintenance Dashboard")
-st.markdown("Upload two Excel files → Select Equipment → Filter Data → Analyze → Export")
+st.markdown("Upload Excel → Select Sheet → Select Equipment → Filter Data → Analyze → Export")
 
 if st.session_state.equipment_data is None:
-    st.info("👈 Upload both Excel files in the sidebar to get started")
+    st.info("👈 Upload your Excel file in the sidebar to get started")
+    st.stop()
+
+df = st.session_state.equipment_data
+
+# Verify required columns exist
+required_cols = ['Equipment Code', 'Type', 'Module', 'Components']
+missing_cols = [col for col in required_cols if col not in df.columns]
+
+if missing_cols:
+    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+    st.info("**Expected columns:**")
+    st.write("- Equipment Code")
+    st.write("- Type")
+    st.write("- Module")
+    st.write("- Components")
+    st.write("- Preparation/Finalization (h:mm:ss)")
+    st.write("- Activity (h:mm:ss)")
+    st.write("- Total time (h:mm:ss)")
+    st.write("- No of man power")
     st.stop()
 
 # ============================================================================
@@ -439,9 +481,10 @@ if st.session_state.equipment_data is None:
 if view_mode == "🔍 Equipment Selection":
     
     st.header("Equipment Selection & Data Preview")
+    st.caption(f"Sheet: **{st.session_state.selected_sheet}**")
     
     # FILTER 1: Equipment Code Selection (Square Cards)
-    equipment_codes = get_equipment_codes(st.session_state.equipment_data)
+    equipment_codes = get_equipment_codes(df)
     
     if equipment_codes:
         st.subheader("📦 Step 1: Select Equipment Code")
@@ -449,14 +492,10 @@ if view_mode == "🔍 Equipment Selection":
         cols = st.columns(3)
         for idx, code in enumerate(equipment_codes):
             with cols[idx % 3]:
-                # Create beautiful equipment card
-                is_selected = st.session_state.selected_equipment == code
-                
                 # Get type for this equipment
-                equipment_type = get_type_for_equipment(
-                    st.session_state.equipment_data,
-                    code
-                )
+                equipment_type = get_type_for_equipment(df, code)
+                
+                is_selected = st.session_state.selected_equipment == code
                 
                 card_html = f"""
                 <div class="equipment-card {'selected' if is_selected else ''}">
@@ -492,7 +531,7 @@ if view_mode == "🔍 Equipment Selection":
             st.markdown("---")
             
             # FILTER 3: Module Selection
-            modules = get_modules(st.session_state.equipment_data, st.session_state.selected_equipment)
+            modules = get_modules(df, st.session_state.selected_equipment)
             
             if modules:
                 st.subheader("📊 Step 3: Select Module")
@@ -517,7 +556,7 @@ if view_mode == "🔍 Equipment Selection":
                 # FILTER 4: Components Selection
                 if st.session_state.selected_module:
                     components = get_components(
-                        st.session_state.equipment_data,
+                        df,
                         st.session_state.selected_equipment,
                         st.session_state.selected_module
                     )
@@ -526,7 +565,7 @@ if view_mode == "🔍 Equipment Selection":
                         st.subheader("🔹 Step 4: Select Components")
                         
                         selected_components = st.multiselect(
-                            "Choose components (Selections persist when switching views)",
+                            "Choose components",
                             options=components,
                             default=st.session_state.selected_components if st.session_state.selected_components else components[0:1],
                             key="component_select"
@@ -538,7 +577,7 @@ if view_mode == "🔍 Equipment Selection":
                         # DATA DISPLAY & STATISTICS
                         if st.session_state.selected_components:
                             filtered_df = filter_data(
-                                st.session_state.equipment_data,
+                                df,
                                 st.session_state.selected_equipment,
                                 st.session_state.selected_module,
                                 st.session_state.selected_components
@@ -587,11 +626,11 @@ if view_mode == "🔍 Equipment Selection":
 elif view_mode == "📊 Analytics":
     
     if not st.session_state.selected_equipment or not st.session_state.selected_components:
-        st.warning("Please select equipment and components first")
+        st.warning("Please select equipment and components first from Equipment Selection view")
         st.stop()
     
     filtered_df = filter_data(
-        st.session_state.equipment_data,
+        df,
         st.session_state.selected_equipment,
         st.session_state.selected_module,
         st.session_state.selected_components
@@ -609,10 +648,20 @@ elif view_mode == "📊 Analytics":
     
     with tab2:
         st.subheader("Time Analysis")
-        if 'Preparation/Finalization (h:mm:ss)' in filtered_df.columns and 'Activity (h:mm:ss)' in filtered_df.columns:
+        # Find time columns
+        prep_col = None
+        activity_col = None
+        
+        for col in df.columns:
+            if 'preparation' in col.lower() or 'finalization' in col.lower():
+                prep_col = col
+            if 'activity' in col.lower():
+                activity_col = col
+        
+        if prep_col and activity_col:
             try:
-                prep = filtered_df['Preparation/Finalization (h:mm:ss)'].apply(time_str_to_hours)
-                activity = filtered_df['Activity (h:mm:ss)'].apply(time_str_to_hours)
+                prep = filtered_df[prep_col].apply(time_str_to_hours)
+                activity = filtered_df[activity_col].apply(time_str_to_hours)
                 
                 fig = go.Figure(data=[
                     go.Bar(name='Preparation', x=filtered_df['Components'], y=prep),
@@ -626,14 +675,20 @@ elif view_mode == "📊 Analytics":
     
     with tab3:
         st.subheader("Manpower Requirements")
-        if 'No of man power' in filtered_df.columns:
+        manpower_col = None
+        for col in df.columns:
+            if 'man' in col.lower() and 'power' in col.lower():
+                manpower_col = col
+                break
+        
+        if manpower_col:
             try:
                 fig = px.bar(
                     filtered_df,
                     x='Components',
-                    y='No of man power',
+                    y=manpower_col,
                     title="Manpower Needed",
-                    color='No of man power',
+                    color=manpower_col,
                     color_continuous_scale='Viridis'
                 )
                 fig.update_layout(height=500)
@@ -648,9 +703,10 @@ elif view_mode == "📊 Analytics":
 elif view_mode == "📈 Summary":
     
     st.header("Summary Report")
+    st.caption(f"Sheet: **{st.session_state.selected_sheet}**")
     
-    equipment_codes = get_equipment_codes(st.session_state.equipment_data)
-    stats = calculate_stats(st.session_state.equipment_data)
+    equipment_codes = get_equipment_codes(df)
+    stats = calculate_stats(df)
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -664,7 +720,7 @@ elif view_mode == "📈 Summary":
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-card-label">Total Records</div>
-            <div class="stat-card-value">{len(st.session_state.equipment_data)}</div>
+            <div class="stat-card-value">{len(df)}</div>
         </div>
         """, unsafe_allow_html=True)
     with col3:
@@ -680,10 +736,8 @@ elif view_mode == "📈 Summary":
     
     summary_data = []
     for equip_code in equipment_codes:
-        equip_df = st.session_state.equipment_data[
-            st.session_state.equipment_data['Equipment Code'] == equip_code
-        ]
-        equip_type = get_type_for_equipment(st.session_state.equipment_data, equip_code)
+        equip_df = df[df['Equipment Code'] == equip_code]
+        equip_type = get_type_for_equipment(df, equip_code)
         
         summary_data.append({
             'Equipment Code': equip_code,
@@ -701,9 +755,9 @@ elif view_mode == "📈 Summary":
 st.markdown("---")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.caption("🔧 Equipment Maintenance Dashboard v1.0")
+    st.caption("🔧 Equipment Maintenance Dashboard v1.1")
 with col2:
     if st.session_state.equipment_data is not None:
-        st.caption(f"Records: {len(st.session_state.equipment_data)}")
+        st.caption(f"Records: {len(st.session_state.equipment_data)} | Sheet: {st.session_state.selected_sheet}")
 with col3:
-    st.caption("✅ Multi-Excel Integration | 📊 Cascading Filters")
+    st.caption("✅ Single Excel with Sheets | 📊 Cascading Filters")
